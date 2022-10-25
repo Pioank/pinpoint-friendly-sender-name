@@ -1,0 +1,108 @@
+# author: pavlosik@
+---
+AWSTemplateFormatVersion: 2010-09-09
+Description: Pinpoint friendly sender name
+
+Parameters:
+
+  PinpointProjectId:
+    Type: String
+    Description: Amazon Pinpoint Project ID
+
+Resources:
+
+#### AWS LAMBDAS
+##################################
+
+  PinpointFriendlySender:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.lambda_handler
+      Role: !GetAtt PinpointFriendlySenderRole.Arn
+      Runtime: python3.9
+      Timeout: 60
+      Environment:
+        Variables:
+          PINPOINT_APP_ID: !Ref PinpointProjectId
+      ReservedConcurrentExecutions: 1
+      Code:
+       ZipFile: |
+        import os
+        import json
+        import boto3
+        client = boto3.client('pinpoint')
+        application_id = os.environ['PINPOINT_APP_ID']
+
+        def lambda_handler(event, context):
+            data = list(event['Data'].split(","))
+            EmailTemplate = data[1]
+            FriendlyName = str(data[0]) + " <" + str(data[2]) + ">"
+            endpoints = event['Endpoints']
+            
+            for endpoint in endpoints:
+                response = client.send_messages(
+                    ApplicationId = application_id,
+                    MessageRequest = {
+                        'Endpoints': {
+                            endpoint: {}
+                        },
+                        'MessageConfiguration': {
+                            'EmailMessage': {
+                            'FromAddress': FriendlyName
+                            }
+                        },
+                        'TemplateConfiguration': {
+                            'EmailTemplate': {
+                                'Name': EmailTemplate,
+                                'Version': 'latest'
+                            }
+                        }
+                    }
+                )
+                print(response)
+
+
+#### IAM ROLES
+##################################
+
+  PinpointFriendlySenderRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - "sts:AssumeRole"
+      Path: "/"
+      Policies:
+        -
+          PolicyName: "root"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              -
+                Effect: "Allow"
+                Action:
+                  - "logs:CreateLogGroup"
+                  - "logs:CreateLogStream"
+                  - "logs:PutLogEvents"
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*"
+              -
+                Effect: "Allow"
+                Action:
+                  - "mobiletargeting:SendMessages"
+                Resource:
+                  - !Sub "arn:aws:mobiletargeting:${AWS::Region}:${AWS::AccountId}:*"
+  
+
+  LambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: "lambda:InvokeFunction"
+      Principal: "pinpoint.amazonaws.com"
+      SourceArn: !Sub "arn:aws:mobiletargeting:${AWS::Region}:${AWS::AccountId}:*"
+      FunctionName: !GetAtt PinpointFriendlySender.Arn
